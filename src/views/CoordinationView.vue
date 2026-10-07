@@ -14,7 +14,7 @@ const store = useAppStore()
 const { data, devices, settings, issues } = storeToRefs(store)
 const typeFilter = ref<ValidationIssue['type'] | ''>('')
 const levelFilter = ref<ValidationIssue['level'] | ''>('')
-const statusFilter = ref<ValidationIssue['status'] | ''>('')
+const statusFilter = ref<ValidationIssue['status'] | 'stale' | ''>('')
 const selected = ref<ValidationIssue>()
 const reply = ref('')
 const validating = ref(false)
@@ -25,7 +25,9 @@ const filtered = computed(() =>
     const matchesDevice = !deviceFilter.value || issue.deviceIds.includes(deviceFilter.value)
     const matchesType = !typeFilter.value || issue.type === typeFilter.value
     const matchesLevel = !levelFilter.value || issue.level === levelFilter.value
-    const matchesStatus = !statusFilter.value || issue.status === statusFilter.value
+    const matchesStatus =
+      !statusFilter.value ||
+      (statusFilter.value === 'stale' ? !!issue.stale : !issue.stale && issue.status === statusFilter.value)
     return matchesDevice && matchesType && matchesLevel && matchesStatus
   }),
 )
@@ -124,6 +126,7 @@ async function submitReply() {
         <el-option label="待处理" value="open" />
         <el-option label="回复中" value="replying" />
         <el-option label="已关闭" value="closed" />
+        <el-option label="已失效" value="stale" />
       </el-select>
       <span class="grow" />
       <span class="muted">当前显示 {{ filtered.length }} / {{ issues.length }} 条</span>
@@ -146,7 +149,10 @@ async function submitReply() {
               :class="issue.level"
             />
             <span>
-              <strong>{{ issue.pairLabel }}</strong>
+              <strong>
+                {{ issue.pairLabel }}
+                <el-tag v-if="issue.stale" size="small" type="info" effect="plain">已失效</el-tag>
+              </strong>
               <small>{{ issue.message }}</small>
             </span>
           </button>
@@ -164,7 +170,24 @@ async function submitReply() {
             <el-tag :type="selected.status === 'closed' ? 'success' : 'warning'" effect="plain">
               {{ selected.status === 'closed' ? '已关闭' : selected.status === 'replying' ? '回复中' : '待处理' }}
             </el-tag>
+            <el-tag v-if="selected.stale" type="info" effect="plain">已失效</el-tag>
           </div>
+          <el-alert
+            v-if="selected.stale"
+            title="依赖的设备、定值或场景动作已变化，该结论不再复现，仅留痕待复核。"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 10px"
+          />
+          <el-alert
+            v-else-if="selected.recomputedAt"
+            title="依赖输入已变化，原结论失效并重算，需重新处理。"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 10px"
+          />
           <el-alert
             :title="selected.suggestion"
             :type="selected.level === 'high' ? 'error' : 'warning'"

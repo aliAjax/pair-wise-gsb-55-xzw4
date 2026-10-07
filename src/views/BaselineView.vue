@@ -23,6 +23,19 @@ const baselineComments = computed(() =>
     (item) => item.targetType === 'baseline' && item.targetId === selectedId.value,
   ),
 )
+const openHighIssues = computed(() =>
+  data.value.issues.filter((issue) => !issue.stale && issue.level === 'high' && issue.status !== 'closed'),
+)
+const lockBlockReason = computed(() => {
+  if (data.value.legacyKeys.length) {
+    return `存在 ${data.value.legacyKeys.length} 项历史待核数据，补齐修订链前不能锁定新基线。`
+  }
+  if (store.pendingConflicts.length) {
+    return `存在 ${store.pendingConflicts.length} 项待裁决的双端冲突，裁决完成前不能锁定新基线。`
+  }
+  if (openHighIssues.value.length) return '当前存在未关闭的高风险问题，批准锁定会被系统拒绝。'
+  return ''
+})
 
 watch(
   () => data.value.baselines,
@@ -87,7 +100,7 @@ async function submitComment() {
         <el-button @click="createDialog = true">创建基线上会签</el-button>
         <el-button
           type="primary"
-          :disabled="!selected || selected.status === 'locked'"
+          :disabled="!selected || selected.status === 'locked' || !!lockBlockReason"
           :loading="store.saving"
           @click="lockBaseline"
         >
@@ -137,6 +150,9 @@ async function submitComment() {
               {{ selected.lockedAt ? new Date(selected.lockedAt).toLocaleString('zh-CN') : '尚未锁定' }}
             </el-descriptions-item>
             <el-descriptions-item label="快照定值">{{ selected.snapshot.length }} 条</el-descriptions-item>
+            <el-descriptions-item label="修订号">
+              <span class="mono">{{ selected.revisionId ?? '未登记' }}</span>
+            </el-descriptions-item>
             <el-descriptions-item label="校验码">
               <span class="mono">{{ selected.checksum }}</span>
             </el-descriptions-item>
@@ -195,16 +211,19 @@ async function submitComment() {
         <div class="lock-checklist">
           <el-checkbox :model-value="true" disabled>批量校验已执行并留痕</el-checkbox>
           <el-checkbox :model-value="true" disabled>至少一个故障场景已完成验证</el-checkbox>
-          <el-checkbox
-            :model-value="!data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-            disabled
-          >
+          <el-checkbox :model-value="!openHighIssues.length" disabled>
             高风险问题全部关闭
+          </el-checkbox>
+          <el-checkbox :model-value="!data.legacyKeys.length" disabled>
+            历史待核数据已补齐修订链
+          </el-checkbox>
+          <el-checkbox :model-value="!store.pendingConflicts.length" disabled>
+            双端冲突已全部裁决
           </el-checkbox>
         </div>
         <el-alert
-          v-if="data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-          title="当前存在未关闭的高风险问题，批准锁定会被系统拒绝。"
+          v-if="lockBlockReason"
+          :title="lockBlockReason"
           type="error"
           :closable="false"
           show-icon
@@ -216,6 +235,13 @@ async function submitComment() {
           :closable="false"
           show-icon
         />
+        <el-button
+          v-if="data.legacyKeys.length || store.pendingConflicts.length"
+          style="margin-top: 12px"
+          @click="$router.push('/sync')"
+        >
+          前往同步合并处理
+        </el-button>
       </section>
     </div>
 

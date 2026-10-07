@@ -1,7 +1,55 @@
 import type { AppState } from '@/types/domain'
 import { createInitialState } from '@/data/mock'
+import { issueFingerprint } from '@/services/validation'
+import { now, objectKey } from '@/services/revision'
 
 const STORAGE_KEY = 'grid-protection-review-v1'
+
+/**
+ * 旧数据迁移：缺少修订链的状态整体标记为历史待核，
+ * 补齐修订链之前不允许锁定新基线。
+ */
+export function migrateState(state: AppState): AppState {
+  state.revisionLog ??= []
+  state.objectRevisions ??= {}
+  state.heads ??= { dispatch: null, station: null }
+  state.conflicts ??= []
+  state.syncBatches ??= []
+  state.remote ??= null
+  state.legacyKeys ??= []
+
+  // 旧版本问题记录缺少指纹，按当前输入补齐
+  state.issues = (state.issues ?? []).map((issue) =>
+    issue.fingerprint
+      ? issue
+      : { ...issue, fingerprint: issueFingerprint(issue, state.settings, state.devices) },
+  )
+
+  if (!state.revisionLog.length) {
+    const keys = [
+      ...state.devices.map((item) => objectKey('device', item.id)),
+      ...state.settings.map((item) => objectKey('setting', item.id)),
+      ...state.issues.map((item) => objectKey('issue', item.id)),
+      ...state.scenarios.map((item) => objectKey('scenario', item.id)),
+      ...state.baselines.map((item) => objectKey('baseline', item.id)),
+    ]
+    state.revisionLog.push({
+      id: 'rev-migrate-0',
+      parentId: null,
+      side: 'dispatch',
+      kind: 'migrate',
+      objectKeys: keys,
+      summary: '历史数据迁移：原数据缺少修订链，全部标记为历史待核',
+      createdAt: now(),
+    })
+    keys.forEach((key) => {
+      state.objectRevisions[key] = 'rev-migrate-0'
+    })
+    state.heads.dispatch = 'rev-migrate-0'
+    state.legacyKeys = keys
+  }
+  return state
+}
 
 export function loadState(): AppState {
   if (typeof window === 'undefined') return createInitialState()
@@ -12,7 +60,7 @@ export function loadState(): AppState {
     return initial
   }
   try {
-    return JSON.parse(raw) as AppState
+    return migrateState(JSON.parse(raw) as AppState)
   } catch {
     const initial = createInitialState()
     saveState(initial)

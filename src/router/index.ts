@@ -5,6 +5,7 @@ import DeviceEditorView from '@/views/DeviceEditorView.vue'
 import CoordinationView from '@/views/CoordinationView.vue'
 import ScenariosView from '@/views/ScenariosView.vue'
 import BaselineView from '@/views/BaselineView.vue'
+import SyncMergeView from '@/views/SyncMergeView.vue'
 import AuditView from '@/views/AuditView.vue'
 
 export const router = createRouter({
@@ -35,6 +36,12 @@ export const router = createRouter({
       name: 'baseline',
       component: BaselineView,
       meta: { title: '会签与基线' },
+    },
+    {
+      path: '/sync',
+      name: 'sync',
+      component: SyncMergeView,
+      meta: { title: '同步合并' },
     },
     { path: '/audit', name: 'audit', component: AuditView, meta: { title: '审计与导出' } },
   ],

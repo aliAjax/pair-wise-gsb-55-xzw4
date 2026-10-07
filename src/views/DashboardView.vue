@@ -10,7 +10,8 @@ const router = useRouter()
 const store = useAppStore()
 const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
 
-const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
+const activeIssues = computed(() => issues.value.filter((issue) => !issue.stale))
+const highIssues = computed(() => activeIssues.value.filter((issue) => issue.level === 'high'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
 const approvedScenarios = computed(
   () => scenarios.value.filter((scenario) => ['approved', 'locked'].includes(scenario.status)).length,
@@ -77,7 +78,7 @@ const statusText = (status: string) =>
           <el-button text type="primary" @click="router.push('/coordination')">查看全部</el-button>
         </div>
         <IssueTable
-          :issues="issues.slice(0, 6)"
+          :issues="activeIssues.slice(0, 6)"
           :devices="devices"
           compact
           @select="router.push('/coordination')"

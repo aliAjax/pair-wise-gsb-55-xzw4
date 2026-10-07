@@ -1,9 +1,12 @@
 import type {
+  AppState,
   Device,
+  FaultScenario,
   ProtectionSetting,
   SettingDiff,
   ValidationIssue,
 } from '@/types/domain'
+import { appendAuditOnce, now } from '@/services/revision'
 
 const issueMeta: Record<ValidationIssue['type'], Pick<ValidationIssue, 'level' | 'suggestion'>> = {
   overreach: {
@@ -27,12 +30,81 @@ const issueMeta: Record<ValidationIssue['type'], Pick<ValidationIssue, 'level' |
 const deviceName = (devices: Device[], id: string) =>
   devices.find((device) => device.id === id)?.name ?? id
 
+export function hashText(source: string): string {
+  let value = 0
+  for (let index = 0; index < source.length; index += 1) {
+    value = (value * 31 + source.charCodeAt(index)) >>> 0
+  }
+  return value.toString(16).toUpperCase().padStart(8, '0')
+}
+
+/**
+ * 校核结果指纹：只取与该问题类型真正相关的输入字段。
+ * 设备、定值或场景动作一旦变化，对应指纹即改变，校核结果失效重算。
+ */
+export function issueFingerprint(
+  issue: Pick<ValidationIssue, 'type' | 'settingIds' | 'deviceIds'>,
+  settings: ProtectionSetting[],
+  devices: Device[],
+): string {
+  const related = issue.settingIds
+    .map((id) => settings.find((setting) => setting.id === id))
+    .filter((item): item is ProtectionSetting => Boolean(item))
+  const parts: unknown[] = [issue.type]
+  if (issue.type === 'time-inversion' || issue.type === 'overreach') {
+    parts.push(related.map((item) => [item.id, item.timeS, item.direction]))
+  }
+  if (issue.type === 'overreach') {
+    parts.push(
+      issue.deviceIds.map((id) => {
+        const device = devices.find((item) => item.id === id)
+        return [id, device?.parentId ?? null, device?.status ?? null]
+      }),
+    )
+  }
+  if (issue.type === 'sensitivity') {
+    parts.push(related.map((item) => [item.id, item.sensitivity, item.currentA]))
+  }
+  if (issue.type === 'reclose') {
+    parts.push(related.map((item) => [item.id, item.recloseEnabled, item.recloseDelayS]))
+  }
+  return hashText(JSON.stringify(parts))
+}
+
+/** 场景校核指纹：动作序列、停电范围与涉及装置的定值共同决定批准结论 */
+export function scenarioFingerprint(
+  scenario: FaultScenario,
+  settings: ProtectionSetting[],
+): string {
+  const relayIds = [...new Set(scenario.steps.map((step) => step.relayId))]
+  const related = settings
+    .filter((setting) => relayIds.includes(setting.relayId))
+    .map((setting) => [
+      setting.id,
+      setting.stage,
+      setting.currentA,
+      setting.timeS,
+      setting.recloseEnabled,
+      setting.recloseDelayS,
+    ])
+  return hashText(
+    JSON.stringify([
+      scenario.operationMode,
+      scenario.faultDeviceId,
+      scenario.faultType,
+      scenario.steps,
+      scenario.outageDevices,
+      related,
+    ]),
+  )
+}
+
 export function validateSettings(
   settings: ProtectionSetting[],
   devices: Device[],
 ): ValidationIssue[] {
-  const issues: ValidationIssue[] = []
-  const now = new Date().toISOString()
+  const issues: Array<Omit<ValidationIssue, 'fingerprint'>> = []
+  const createdAt = new Date().toISOString()
   const addIssue = (
     type: ValidationIssue['type'],
     pair: ProtectionSetting[],
@@ -50,7 +122,7 @@ export function validateSettings(
       suggestion: meta.suggestion,
       pairLabel,
       status: 'open',
-      createdAt: now,
+      createdAt,
     })
   }
 
@@ -119,9 +191,79 @@ export function validateSettings(
     })
   })
 
-  const unique = new Map<string, ValidationIssue>()
+  const unique = new Map<string, Omit<ValidationIssue, 'fingerprint'>>()
   issues.forEach((issue) => unique.set(issue.id, issue))
-  return [...unique.values()]
+  return [...unique.values()].map((issue) => ({
+    ...issue,
+    fingerprint: issueFingerprint(issue, settings, devices),
+  }))
+}
+
+/**
+ * 校核结果失效重算：
+ * - 依赖输入未变的问题保留处理状态（曾失效的自动复活）；
+ * - 依赖输入已变的问题结论失效，重算后回到待处理；
+ * - 不再复现的问题标记“已失效”留痕，不参与基线锁定条件；
+ * - 已批准场景的动作序列或涉及定值变化后，批准结论失效退回会签。
+ * 已锁定基线的快照不参与重算，始终保持原样。
+ */
+export function recomputeIssues(state: AppState): void {
+  const previous = state.issues
+  const fresh = validateSettings(state.settings, state.devices)
+  const recomputedAt = now()
+  let invalidated = 0
+
+  const carried = fresh.map((issue) => {
+    const old = previous.find((item) => item.id === issue.id)
+    if (old && old.fingerprint === issue.fingerprint) {
+      return { ...issue, status: old.status, createdAt: old.createdAt }
+    }
+    if (old) {
+      invalidated += 1
+      return { ...issue, status: 'open' as const, createdAt: old.createdAt, recomputedAt }
+    }
+    return issue
+  })
+
+  const stale = previous
+    .filter((item) => !fresh.some((issue) => issue.id === item.id))
+    .map((item) => {
+      if (item.stale) return item
+      invalidated += 1
+      return { ...item, stale: true as const, recomputedAt }
+    })
+
+  state.issues = [...carried, ...stale]
+
+  const demoted: string[] = []
+  state.scenarios.forEach((scenario) => {
+    const fingerprint = scenarioFingerprint(scenario, state.settings)
+    if (
+      scenario.status === 'approved' &&
+      scenario.reviewFingerprint &&
+      scenario.reviewFingerprint !== fingerprint
+    ) {
+      scenario.status = 'reviewing'
+      demoted.push(scenario.name)
+    }
+  })
+
+  if (invalidated > 0) {
+    appendAuditOnce(state, {
+      action: '校核失效重算',
+      target: '保护配合校核结果',
+      operator: '系统',
+      detail: `设备、定值或场景动作变化，${invalidated} 条校核结果失效并重算。`,
+    })
+  }
+  if (demoted.length > 0) {
+    appendAuditOnce(state, {
+      action: '场景校核失效',
+      target: demoted.join('、'),
+      operator: '系统',
+      detail: '场景动作或涉及定值已变化，批准结论失效，退回会签。',
+    })
+  }
 }
 
 export function diffSettings(

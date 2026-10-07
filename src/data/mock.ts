@@ -4,8 +4,9 @@ import type {
   Device,
   FaultScenario,
   ProtectionSetting,
+  RevisionRecord,
 } from '@/types/domain'
-import { validateSettings } from '@/services/validation'
+import { scenarioFingerprint, validateSettings } from '@/services/validation'
 
 export const operationModes = ['正常方式', '单母线检修', '线路 N-1', '变压器检修']
 
@@ -342,15 +343,63 @@ const audit: AuditEntry[] = [
 
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const clonedDevices = devices.map((device) => ({
+    ...device,
+    operationModes: [...device.operationModes],
+  }))
+  const clonedScenarios = scenarios.map((scenario) => ({
+    ...scenario,
+    steps: scenario.steps.map((step) => ({ ...step })),
+    outageDevices: [...scenario.outageDevices],
+  }))
+  const builtIssues = validateSettings(clonedSettings, clonedDevices)
+  // 已批准场景登记校核指纹，此后动作或涉及定值变化即失效
+  clonedScenarios.forEach((scenario) => {
+    if (scenario.status === 'approved') {
+      scenario.reviewFingerprint = scenarioFingerprint(scenario, clonedSettings)
+    }
+  })
+
+  // 旧系统导入的两个对象缺少修订链，标记历史待核，补齐前不能锁定新基线
+  const legacyKeys = ['setting:set-t1-2', 'device:line-202']
+  const allKeys = [
+    ...clonedDevices.map((item) => `device:${item.id}`),
+    ...clonedSettings.map((item) => `setting:${item.id}`),
+    ...builtIssues.map((item) => `issue:${item.id}`),
+    ...clonedScenarios.map((item) => `scenario:${item.id}`),
+    'baseline:baseline-1',
+    'comment:comment-1',
+  ]
+  const revisionLog: RevisionRecord[] = [
+    {
+      id: 'rev-init',
+      parentId: null,
+      side: 'dispatch',
+      kind: 'edit',
+      objectKeys: allKeys.filter((key) => !legacyKeys.includes(key)),
+      summary: '初始方案导入：12 台设备、9 份定值、3 个故障场景',
+      createdAt: '2026-09-25T00:30:00.000Z',
+    },
+    {
+      id: 'rev-migrate-0',
+      parentId: 'rev-init',
+      side: 'dispatch',
+      kind: 'migrate',
+      objectKeys: legacyKeys,
+      summary: '旧系统导入数据缺少修订链，标记为历史待核',
+      createdAt: '2026-09-25T00:31:00.000Z',
+    },
+  ]
+  const objectRevisions: Record<string, string> = {}
+  allKeys.forEach((key) => {
+    objectRevisions[key] = legacyKeys.includes(key) ? 'rev-migrate-0' : 'rev-init'
+  })
+
   return {
-    devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
+    devices: clonedDevices,
     settings: clonedSettings,
-    issues: validateSettings(clonedSettings, devices),
-    scenarios: scenarios.map((scenario) => ({
-      ...scenario,
-      steps: scenario.steps.map((step) => ({ ...step })),
-      outageDevices: [...scenario.outageDevices],
-    })),
+    issues: builtIssues,
+    scenarios: clonedScenarios,
     baselines: [
       {
         id: 'baseline-1',
@@ -360,7 +409,20 @@ export function createInitialState(): AppState {
         lockedAt: '2026-09-02T01:20:00.000Z',
         createdBy: '陈工',
         note: '秋检前正式运行定值',
-        snapshot: clonedSettings.map((setting) => ({ ...setting, currentA: setting.currentA + 0.1 })),
+        snapshot: clonedSettings.map((setting) => ({
+          ...setting,
+          currentA: Number((setting.currentA + 0.1).toFixed(2)),
+        })),
+        deviceSnapshot: clonedDevices.map((device) => ({
+          ...device,
+          operationModes: [...device.operationModes],
+        })),
+        scenarioSnapshot: clonedScenarios.map((scenario) => ({
+          ...scenario,
+          steps: scenario.steps.map((step) => ({ ...step })),
+          outageDevices: [...scenario.outageDevices],
+        })),
+        revisionId: 'rev-init',
         checksum: 'A5F1-927C',
       },
     ],
@@ -376,6 +438,13 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    revisionLog,
+    objectRevisions,
+    heads: { dispatch: 'rev-migrate-0', station: null },
+    conflicts: [],
+    syncBatches: [],
+    remote: null,
+    legacyKeys,
   }
 }
 

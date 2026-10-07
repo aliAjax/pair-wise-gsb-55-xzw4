@@ -5,11 +5,14 @@ import axios, {
 } from 'axios'
 import type { AppState } from '@/types/domain'
 import { exportSettingsText, loadState, resetState, saveState } from '@/services/storage'
+import { applySyncBatch } from '@/services/merge'
 
 type MockRequest = {
   state?: AppState
   patch?: Partial<AppState>
   action?: 'reset' | 'export'
+  batchId?: string
+  simulateFailure?: boolean
 }
 
 function ok<T>(config: AxiosRequestConfig, data: T): AxiosResponse<T> {
@@ -38,6 +41,20 @@ const mockAdapter: AxiosAdapter = async (config) => {
     saveState(state)
     return ok(config, state)
   }
+  if (config.url === '/sync/apply' && config.method === 'post') {
+    const state = (payload.state ?? loadState()) as AppState
+    try {
+      applySyncBatch(state, payload.batchId ?? '', {
+        failFirstPending: Boolean(payload.simulateFailure),
+      })
+      saveState(state)
+      return ok(config, state)
+    } catch (error) {
+      // 保存失败：已合并对象的进度保留在库中，未完成批次留待重试
+      saveState(state)
+      return Promise.reject(error instanceof Error ? error : new Error('同步批次保存失败'))
+    }
+  }
   if (config.url === '/actions/reset' && config.method === 'post') {
     return ok(config, resetState())
   }
@@ -65,6 +82,15 @@ export async function persistState(state: AppState): Promise<AppState> {
 
 export async function patchState(patch: Partial<AppState>): Promise<AppState> {
   const response = await http.post<AppState>('/state/patch', { patch })
+  return response.data
+}
+
+export async function applySyncBatchRequest(
+  state: AppState,
+  batchId: string,
+  simulateFailure: boolean,
+): Promise<AppState> {
+  const response = await http.post<AppState>('/sync/apply', { state, batchId, simulateFailure })
   return response.data
 }
 
