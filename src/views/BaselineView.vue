@@ -7,7 +7,7 @@ import { useAppStore } from '@/stores/app'
 import { diffSettings } from '@/services/validation'
 
 const store = useAppStore()
-const { data, settings } = storeToRefs(store)
+const { data, settings, pendingConflicts, legacyPending } = storeToRefs(store)
 const selectedId = ref(data.value.activeBaselineId ?? data.value.baselines[0]?.id ?? '')
 const createDialog = ref(false)
 const baselineNote = ref('')
@@ -22,6 +22,12 @@ const baselineComments = computed(() =>
   data.value.comments.filter(
     (item) => item.targetType === 'baseline' && item.targetId === selectedId.value,
   ),
+)
+const hasOpenHighIssue = computed(() =>
+  data.value.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed'),
+)
+const lockBlocked = computed(
+  () => legacyPending.value || pendingConflicts.value.length > 0 || hasOpenHighIssue.value,
 )
 
 watch(
@@ -87,7 +93,7 @@ async function submitComment() {
         <el-button @click="createDialog = true">创建基线上会签</el-button>
         <el-button
           type="primary"
-          :disabled="!selected || selected.status === 'locked'"
+          :disabled="!selected || selected.status === 'locked' || lockBlocked"
           :loading="store.saving"
           @click="lockBaseline"
         >
@@ -193,17 +199,34 @@ async function submitComment() {
       <section class="panel">
         <div class="panel-title"><h3>锁定条件</h3></div>
         <div class="lock-checklist">
+          <el-checkbox :model-value="!legacyPending" disabled>
+            修订链已补齐（非历史待核）
+          </el-checkbox>
+          <el-checkbox :model-value="!pendingConflicts.length" disabled>
+            无待裁决合并冲突
+          </el-checkbox>
           <el-checkbox :model-value="true" disabled>批量校验已执行并留痕</el-checkbox>
           <el-checkbox :model-value="true" disabled>至少一个故障场景已完成验证</el-checkbox>
-          <el-checkbox
-            :model-value="!data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
-            disabled
-          >
+          <el-checkbox :model-value="!hasOpenHighIssue" disabled>
             高风险问题全部关闭
           </el-checkbox>
         </div>
         <el-alert
-          v-if="data.issues.some((issue) => issue.level === 'high' && issue.status !== 'closed')"
+          v-if="legacyPending"
+          title="历史数据缺少修订链（历史待核），请先在「同步合并」页补齐修订链。"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="pendingConflicts.length"
+          :title="`存在 ${pendingConflicts.length} 条待裁决合并冲突，请先在「同步合并」页完成裁决。`"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
+          v-else-if="hasOpenHighIssue"
           title="当前存在未关闭的高风险问题，批准锁定会被系统拒绝。"
           type="error"
           :closable="false"

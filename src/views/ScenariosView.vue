@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAppStore } from '@/stores/app'
 import { operationModes } from '@/data/mock'
-import type { ReviewStatus } from '@/types/domain'
+import type { ReviewStatus, ScenarioStep } from '@/types/domain'
 
 const store = useAppStore()
 const { devices, scenarios } = storeToRefs(store)
@@ -93,6 +93,19 @@ async function changeStatus(status: ReviewStatus) {
   if (!selected.value) return
   await store.updateScenarioStatus(selected.value.id, status)
   ElMessage.success(`场景状态已更新为${statusText(status)}`)
+}
+
+const stepCycle: Record<ScenarioStep['status'], ScenarioStep['status']> = {
+  executed: 'pending',
+  pending: 'skipped',
+  skipped: 'executed',
+}
+
+async function cycleStepStatus(step: ScenarioStep) {
+  if (!selected.value) return
+  const next = stepCycle[step.status]
+  await store.updateScenarioStep(selected.value.id, step.sequence, next)
+  ElMessage.success(`动作 ${step.sequence} 已调整，依赖校核结果已失效重算`)
 }
 
 async function createScenario() {
@@ -188,7 +201,13 @@ onBeforeUnmount(stopPlayback)
             <div :class="{ 'step-active': playbackIndex === index }">
               <strong>{{ step.sequence }}. {{ devices.find((item) => item.id === step.relayId)?.name ?? step.relayId }}</strong>
               <p>{{ step.action }}</p>
-              <el-tag size="small" effect="plain">
+              <el-tag
+                size="small"
+                effect="plain"
+                class="step-status-tag"
+                title="点击切换执行状态，依赖校核结果将失效重算"
+                @click="cycleStepStatus(step)"
+              >
                 {{ step.status === 'executed' ? '已执行' : step.status === 'skipped' ? '跳过' : '待确认' }}
               </el-tag>
             </div>
@@ -289,3 +308,13 @@ onBeforeUnmount(stopPlayback)
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.step-status-tag {
+  cursor: pointer;
+}
+
+.step-status-tag:hover {
+  border-color: #63a7a2;
+}
+</style>

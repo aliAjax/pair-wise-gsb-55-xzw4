@@ -3,6 +3,43 @@ import { createInitialState } from '@/data/mock'
 
 const STORAGE_KEY = 'grid-protection-review-v1'
 
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+
+/**
+ * 兼容旧版本持久化数据：
+ * 缺少修订链的数据标记为“历史待核”，补齐前不允许锁定新基线；
+ * 合并基线以最近锁定基线快照为准，缺失时退回当前工作状态。
+ */
+function migrateState(state: AppState): AppState {
+  const next = state
+  if (!Array.isArray(next.revisionChain) || !next.mergeBase) {
+    const lockedBaseline =
+      next.baselines.find((baseline) => baseline.id === next.activeBaselineId) ??
+      [...next.baselines].reverse().find((baseline) => baseline.status === 'locked')
+    next.revisionChain = []
+    next.mergeBatches = []
+    next.conflicts = []
+    next.currentSide = 'dispatch'
+    next.legacyPending = true
+    next.mergeBase = {
+      baselineId: lockedBaseline?.id ?? null,
+      devices: clone(next.devices),
+      settings: lockedBaseline ? clone(lockedBaseline.snapshot) : clone(next.settings),
+      scenarios: clone(next.scenarios),
+    }
+  }
+  next.mergeBatches = next.mergeBatches ?? []
+  next.conflicts = next.conflicts ?? []
+  next.currentSide = next.currentSide ?? 'dispatch'
+  next.legacyPending = next.legacyPending ?? false
+  next.issues.forEach((issue) => {
+    if (!issue.dependsOn) {
+      issue.dependsOn = [...new Set([...issue.settingIds, ...issue.deviceIds])]
+    }
+  })
+  return next
+}
+
 export function loadState(): AppState {
   if (typeof window === 'undefined') return createInitialState()
   const raw = window.localStorage.getItem(STORAGE_KEY)
@@ -12,7 +49,7 @@ export function loadState(): AppState {
     return initial
   }
   try {
-    return JSON.parse(raw) as AppState
+    return migrateState(JSON.parse(raw) as AppState)
   } catch {
     const initial = createInitialState()
     saveState(initial)

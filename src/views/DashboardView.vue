@@ -8,7 +8,8 @@ import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
 const store = useAppStore()
-const { data, issues, devices, scenarios, activeBaseline } = storeToRefs(store)
+const { data, issues, devices, scenarios, activeBaseline, pendingConflicts, legacyPending } =
+  storeToRefs(store)
 
 const highIssues = computed(() => issues.value.filter((issue) => issue.level === 'high'))
 const runningDevices = computed(() => devices.value.filter((device) => device.status === 'running').length)
@@ -46,6 +47,31 @@ const statusText = (status: string) =>
         <el-button type="primary" @click="router.push('/scenarios')">验证故障场景</el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      v-if="legacyPending"
+      type="error"
+      show-icon
+      :closable="false"
+      class="sync-alert"
+    >
+      <template #title>
+        历史数据缺少修订链，已标记“历史待核”，补齐前不能锁定新基线。
+        <el-button link type="danger" @click="router.push('/sync')">前往同步合并处理</el-button>
+      </template>
+    </el-alert>
+    <el-alert
+      v-else-if="pendingConflicts.length"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="sync-alert"
+    >
+      <template #title>
+        调度端与站端存在 {{ pendingConflicts.length }} 条待裁决合并冲突，两份值已保留待选择。
+        <el-button link type="warning" @click="router.push('/sync')">前往裁决</el-button>
+      </template>
+    </el-alert>
 
     <section class="metric-grid">
       <div class="metric danger">
@@ -123,3 +149,9 @@ const statusText = (status: string) =>
     </section>
   </div>
 </template>
+
+<style scoped>
+.sync-alert {
+  margin-bottom: 16px;
+}
+</style>

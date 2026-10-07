@@ -12,6 +12,13 @@ type MockRequest = {
   action?: 'reset' | 'export'
 }
 
+let failNextSave = false
+
+/** 使下一次 /state 保存失败，用于演示合并批次失败后的保留与重试 */
+export function armNextSaveFailure(): void {
+  failNextSave = true
+}
+
 function ok<T>(config: AxiosRequestConfig, data: T): AxiosResponse<T> {
   return {
     data,
@@ -29,6 +36,10 @@ const mockAdapter: AxiosAdapter = async (config) => {
     return ok(config, loadState())
   }
   if (config.url === '/state' && config.method === 'post') {
+    if (failNextSave) {
+      failNextSave = false
+      return Promise.reject(new Error('模拟存储故障：本次保存未写入，未完成批次已保留在本地'))
+    }
     const next = payload.state ?? loadState()
     saveState(next)
     return ok(config, next)

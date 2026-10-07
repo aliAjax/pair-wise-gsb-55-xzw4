@@ -51,6 +51,13 @@ export function validateSettings(
       pairLabel,
       status: 'open',
       createdAt: now,
+      dependsOn: [
+        ...new Set([
+          ...pair.map((item) => item.id),
+          ...pair.map((item) => item.relayId),
+          ...pair.map((item) => item.protectedDeviceId),
+        ]),
+      ],
     })
   }
 

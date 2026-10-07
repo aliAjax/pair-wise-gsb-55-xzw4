@@ -161,9 +161,19 @@ async function submitReply() {
               <h3>{{ selected.pairLabel }}</h3>
               <span class="muted">{{ selected.message }}</span>
             </div>
-            <el-tag :type="selected.status === 'closed' ? 'success' : 'warning'" effect="plain">
-              {{ selected.status === 'closed' ? '已关闭' : selected.status === 'replying' ? '回复中' : '待处理' }}
-            </el-tag>
+            <div class="issue-tags">
+              <el-tag
+                v-if="selected.recomputedAt"
+                type="warning"
+                effect="plain"
+                :title="`依赖对象变更后于 ${new Date(selected.recomputedAt).toLocaleString('zh-CN')} 失效重算`"
+              >
+                已失效重算
+              </el-tag>
+              <el-tag :type="selected.status === 'closed' ? 'success' : 'warning'" effect="plain">
+                {{ selected.status === 'closed' ? '已关闭' : selected.status === 'replying' ? '回复中' : '待处理' }}
+              </el-tag>
+            </div>
           </div>
           <el-alert
             :title="selected.suggestion"
@@ -228,6 +238,12 @@ async function submitReply() {
 </template>
 
 <style scoped>
+.issue-tags {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .issue-list {
   max-height: 570px;
   overflow: auto;

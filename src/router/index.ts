@@ -4,6 +4,7 @@ import EquipmentView from '@/views/EquipmentView.vue'
 import DeviceEditorView from '@/views/DeviceEditorView.vue'
 import CoordinationView from '@/views/CoordinationView.vue'
 import ScenariosView from '@/views/ScenariosView.vue'
+import SyncView from '@/views/SyncView.vue'
 import BaselineView from '@/views/BaselineView.vue'
 import AuditView from '@/views/AuditView.vue'
 
@@ -29,6 +30,12 @@ export const router = createRouter({
       name: 'scenarios',
       component: ScenariosView,
       meta: { title: '故障场景' },
+    },
+    {
+      path: '/sync',
+      name: 'sync',
+      component: SyncView,
+      meta: { title: '同步合并' },
     },
     {
       path: '/baseline',

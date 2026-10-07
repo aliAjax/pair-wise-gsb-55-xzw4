@@ -342,11 +342,24 @@ const audit: AuditEntry[] = [
 
 export function createInitialState(): AppState {
   const clonedSettings = settings.map((setting) => ({ ...setting }))
+  const clonedDevices = devices.map((device) => ({
+    ...device,
+    operationModes: [...device.operationModes],
+  }))
+  const clonedScenarios = scenarios.map((scenario) => ({
+    ...scenario,
+    steps: scenario.steps.map((step) => ({ ...step })),
+    outageDevices: [...scenario.outageDevices],
+  }))
+  const baselineSnapshot = clonedSettings.map((setting) => ({
+    ...setting,
+    currentA: setting.currentA + 0.1,
+  }))
   return {
-    devices: devices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
+    devices: clonedDevices.map((device) => ({ ...device, operationModes: [...device.operationModes] })),
     settings: clonedSettings,
     issues: validateSettings(clonedSettings, devices),
-    scenarios: scenarios.map((scenario) => ({
+    scenarios: clonedScenarios.map((scenario) => ({
       ...scenario,
       steps: scenario.steps.map((step) => ({ ...step })),
       outageDevices: [...scenario.outageDevices],
@@ -360,7 +373,16 @@ export function createInitialState(): AppState {
         lockedAt: '2026-09-02T01:20:00.000Z',
         createdBy: '陈工',
         note: '秋检前正式运行定值',
-        snapshot: clonedSettings.map((setting) => ({ ...setting, currentA: setting.currentA + 0.1 })),
+        snapshot: baselineSnapshot,
+        deviceSnapshot: clonedDevices.map((device) => ({
+          ...device,
+          operationModes: [...device.operationModes],
+        })),
+        scenarioSnapshot: clonedScenarios.map((scenario) => ({
+          ...scenario,
+          steps: scenario.steps.map((step) => ({ ...step })),
+          outageDevices: [...scenario.outageDevices],
+        })),
         checksum: 'A5F1-927C',
       },
     ],
@@ -376,6 +398,26 @@ export function createInitialState(): AppState {
       },
     ],
     audit,
+    activeBaselineId: 'baseline-1',
+    // 演示数据属于历史数据：尚未建立修订链，标记历史待核，补齐前不能锁定新基线
+    revisionChain: [],
+    mergeBatches: [],
+    conflicts: [],
+    currentSide: 'dispatch',
+    legacyPending: true,
+    mergeBase: {
+      baselineId: 'baseline-1',
+      devices: clonedDevices.map((device) => ({
+        ...device,
+        operationModes: [...device.operationModes],
+      })),
+      settings: baselineSnapshot.map((setting) => ({ ...setting })),
+      scenarios: clonedScenarios.map((scenario) => ({
+        ...scenario,
+        steps: scenario.steps.map((step) => ({ ...step })),
+        outageDevices: [...scenario.outageDevices],
+      })),
+    },
   }
 }
 
